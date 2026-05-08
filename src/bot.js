@@ -1,5 +1,6 @@
 const { getKeywordData } = require('./scraper');
 const { OpenAI } = require('openai');
+const { getExistingSlugs } = require('./analyzer');
 const { config } = require('./config');
 const logger = require('./lib/logger');
 
