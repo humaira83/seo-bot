@@ -4,7 +4,7 @@
  */
 const axios = require('axios');
 const { config } = require('../config');
-const { askJSON } = require('./claude');
+const { askJSON } = require('./ai');
 const { keywordStore } = require('./storage');
 const logger = require('./logger');
 

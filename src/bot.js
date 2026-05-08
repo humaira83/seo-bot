@@ -2,7 +2,7 @@
  * Main Bot Orchestrator
  * Coordinates: keyword research → article writing → internal linking → publishing
  */
-const { askJSON } = require('./lib/claude');
+const { askJSON } = require('./lib/ai');
 const { findNextKeyword, markUsed } = require('./lib/keywords');
 const { getIndex, pickRelevantLinks } = require('./lib/linker');
 const { createPost } = require('./lib/wordpress');
