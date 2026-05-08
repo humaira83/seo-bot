@@ -1,33 +1,39 @@
 const { getKeywordData } = require('./scraper');
-const { OpenAI } = require('openai');
 const { getExistingSlugs } = require('./analyzer');
+const { OpenAI } = require('openai');
 const { config } = require('./config');
 const logger = require('./lib/logger');
+const fs = require('fs');
+const path = require('path');
 
-// ১. প্রিমিয়াম আর্টিকেল জেনারেশন লজিক
+const inventoryPath = path.join(__dirname, 'inventory.json');
+
+// --- Inventory Management Logic ---
+function loadInventory() {
+    if (!fs.existsSync(inventoryPath)) return { keywords: [], posted_urls: [] };
+    return JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
+}
+
+function saveInventory(data) {
+    fs.writeFileSync(inventoryPath, JSON.stringify(data, null, 2));
+}
+
+// --- AI Content Writer ---
 async function generatePremiumContent(keyword, data) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     
-    logger.info(`✍️ GPT-4o দিয়ে আর্টিকেল লেখা হচ্ছে: ${keyword}`);
-
     const prompt = `
-    You are a professional SEO Content Writer. Write a 1500+ word deep-dive article.
+    You are an Expert SEO Strategist. Write a 1500+ word technical guide for: "${keyword}".
     
-    KEYWORD DATA:
-    - Primary Keyword: ${keyword}
-    - Search Volume: ${data.ubersuggest.volume}
-    - SEO Difficulty: ${data.ubersuggest.difficulty}
+    CONTEXT:
+    - Volume: ${data.ubersuggest.volume}, Difficulty: ${data.ubersuggest.difficulty}
+    - Questions to Answer: ${data.atp_questions.join(", ")}
     
-    AUDIENCE QUESTIONS (Use these as Subheadings/H2/H3):
-    ${data.atp_questions.join("\n")}
-
-    STRUCTURE & RULES:
-    1. Introduction: Hook the reader immediately. No robotic "In the digital world" phrases.
-    2. Context: Explain why this keyword matters based on search volume.
-    3. Deep Dive: Answer the questions gathered from AnswerThePublic with expert-level insights.
-    4. Mention MaximoHost (our brand) naturally as a solution for high-performance hosting or group buy tools.
-    5. Formatting: Use bullet points, bold text, and a comparison table.
-    6. Tone: Human-like, helpful, and authoritative.
+    STRICT RULES:
+    1. Human-like conversational tone (Expert Blogger).
+    2. Naturally promote MaximoHost.com for hosting/SEO tools.
+    3. Use H2/H3 tags, bold keywords, and a comparison table.
+    4. Provide actionable insights, not just surface-level info.
     
     Language: ${config.content.language || 'English'}
     `;
@@ -45,42 +51,77 @@ async function generatePremiumContent(keyword, data) {
     }
 }
 
-// ২. মেইন অটোমেশন ওয়ার্কফ্লো
+// --- Main Automation Workflow ---
 async function runDailyGeneration() {
     logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    logger.info('🚀 এসইও কন্টেন্ট ওয়ার্কফ্লো শুরু হচ্ছে...');
+    logger.info('🚀 ENTERPRISE SEO ENGINE ACTIVATED');
     logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    // টেস্ট বা শিডিউল কি-ওয়ার্ড (এটি আপনি পরে ডাইনামিক করতে পারবেন)
-    const targetKeyword = "best group buy seo tools reviews"; 
+    let inventory = loadInventory();
+    const sitemapUrl = `${config.wordpress.url}/post-sitemap.xml`; // Change if needed
+    const existingSlugs = await getExistingSlugs(sitemapUrl);
 
-    // ধাপ ১: স্ক্র্যাপার থেকে ডেটা সংগ্রহ
-    const scrapedData = await getKeywordData(targetKeyword);
+    // 1. Check if we have pending keywords in inventory
+    let targetTask = inventory.keywords.find(k => k.status === 'pending');
 
-    if (scrapedData.status === "success") {
-        logger.info(`✅ ডেটা পাওয়া গেছে! ভলিউম: ${scrapedData.ubersuggest.volume}`);
+    // 2. If no keywords or all done, research new ones
+    if (!targetTask) {
+        logger.info('🔎 Inventory empty or completed. Researching new keywords...');
+        const seedKeyword = "best group buy seo tools"; // Base niche
+        const researchData = await getKeywordData(seedKeyword);
 
-        // ধাপ ২: আর্টিকেল জেনারেশন
-        const finalArticle = await generatePremiumContent(targetKeyword, scrapedData);
+        if (researchData.status === "success") {
+            // Add new keywords to inventory (excluding duplicates from site)
+            const newKeyword = {
+                q: seedKeyword,
+                vol: researchData.ubersuggest.volume,
+                difficulty: researchData.ubersuggest.difficulty,
+                questions: researchData.atp_questions,
+                status: 'pending'
+            };
 
-        if (finalArticle) {
-            logger.info('✨ প্রিমিয়াম আর্টিকেল জেনারেট হয়েছে!');
+            const isDuplicate = existingSlugs.some(slug => slug.includes(seedKeyword.replace(/\s+/g, '-')));
             
-            // ধাপ ৩: এখানে আপনার ওয়ার্ডপ্রেস পোস্টিং ফাংশনটি কল করুন
-            // await postToWordPress(targetKeyword, finalArticle);
-            
-            console.log("\n--- জেনারেটেড আর্টিকেলের প্রথম ৫০০ ক্যারেক্টার ---\n");
-            console.log(finalArticle.substring(0, 500) + "...");
+            if (!isDuplicate) {
+                inventory.keywords.push(newKeyword);
+                saveInventory(inventory);
+                targetTask = newKeyword;
+                logger.info(`✅ New keyword added to inventory: ${seedKeyword}`);
+            } else {
+                logger.warn(`⚠️ Seed keyword "${seedKeyword}" already exists on site. Adjusting...`);
+                return; 
+            }
         }
-    } else {
-        logger.error(`❌ স্ক্র্যাপার ফেইল করেছে: ${scrapedData.msg}`);
+    }
+
+    // 3. Process the selected keyword
+    if (targetTask && targetTask.status === 'pending') {
+        logger.info(`📝 Processing: ${targetTask.q}`);
+        
+        // Final check before writing
+        const article = await generatePremiumContent(targetTask.q, {
+            ubersuggest: { volume: targetTask.vol, difficulty: targetTask.difficulty },
+            atp_questions: targetTask.questions
+        });
+
+        if (article) {
+            // Update status in inventory
+            targetTask.status = 'completed';
+            saveInventory(inventory);
+            
+            logger.info('✨ Article generated successfully!');
+            console.log("\n--- Article Preview ---\n");
+            console.log(article.substring(0, 400) + "...");
+            
+            // TODO: Call your postToWordPress function here
+        }
     }
 }
 
-// ৩. টার্মিনাল থেকে সরাসরি রান করার জন্য কল
+// Trigger Execution
 if (require.main === module) {
     runDailyGeneration().catch(err => {
-        logger.error(`Fatal Error: ${err.message}`);
+        logger.error(`Fatal System Error: ${err.message}`);
         process.exit(1);
     });
 }
