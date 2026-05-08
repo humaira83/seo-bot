@@ -1,145 +1,56 @@
-/**
- * Main Bot Orchestrator
- * Coordinates: keyword research → article writing → internal linking → publishing
- */
-const { askJSON } = require('./lib/ai');
-const { findNextKeyword, markUsed } = require('./lib/keywords');
-const { getIndex, pickRelevantLinks } = require('./lib/linker');
-const { createPost } = require('./lib/wordpress');
-const { articleStore } = require('./lib/storage');
-const { systemPrompt, articleRequest } = require('./prompts/article');
-const { config, validate } = require('./config');
+const { getKeywordData } = require('./scraper');
+const { OpenAI } = require('openai'); // আপনার যদি অন্য প্রোভাইডার থাকে তবে সেটি হবে
+const { config } = require('./config');
 const logger = require('./lib/logger');
 
-/**
- * Generate and publish ONE article end-to-end
- */
-async function generateOneArticle() {
-  logger.step('STEP 1', 'Refreshing internal link index');
-  const index = await getIndex();
-  
-  logger.step('STEP 2', 'Researching keywords');
-  const keyword = await findNextKeyword();
-  
-  logger.step('STEP 3', 'Picking relevant internal links');
-  const relevantLinks = pickRelevantLinks(keyword.keyword, index, 8);
-  logger.info(`Selected ${relevantLinks.length} relevant pages for internal linking`);
-  
-  logger.step('STEP 4', 'Generating article with Claude');
-  logger.info(`Target: ${config.content.wordCount} words, ${config.content.language} language, ${config.content.tone} tone`);
-  
-  const userMsg = articleRequest({
-    keyword: keyword.keyword,
-    intent: keyword.search_intent_explanation,
-    articleAngle: keyword.article_angle,
-    secondaryKeywords: keyword.secondary_keywords,
-    internalLinks: relevantLinks,
-    products: index.products,
-  });
-  
-  const result = await askJSON(systemPrompt(), userMsg, { maxTokens: 8192 });
-  const article = result.json;
-  
-  logger.success(`Article written: "${article.title}"`);
-  logger.info(`Word count: ~${article.word_count} | Internal links: ${article.internal_links_used?.length || 0}`);
-  logger.info(`Tokens used: ${result.usage.input_tokens} in / ${result.usage.output_tokens} out`);
-  
-  logger.step('STEP 5', 'Publishing to WordPress');
-  const post = await createPost({
-    title: article.title,
-    content: article.content,
-    excerpt: article.excerpt,
-    slug: article.slug,
-    status: config.bot.postStatus,
-    tags: [], // TODO: convert tag names to IDs
-    meta: {
-      // Yoast SEO
-      _yoast_wpseo_title: article.title,
-      _yoast_wpseo_metadesc: article.meta_description,
-      _yoast_wpseo_focuskw: article.focus_keyword,
-      // RankMath SEO
-      rank_math_title: article.title,
-      rank_math_description: article.meta_description,
-      rank_math_focus_keyword: article.focus_keyword,
-    },
-  });
-  
-  logger.success(`Published! ID: ${post.id}, URL: ${post.link}`);
-  
-  // Track in storage
-  markUsed(keyword.keyword, post.id);
-  articleStore.set(post.id.toString(), {
-    keyword: keyword.keyword,
-    title: article.title,
-    url: post.link,
-    published_at: new Date().toISOString(),
-    word_count: article.word_count,
-    internal_links: article.internal_links_used,
-  });
-  
-  return { article, post, keyword };
+// আর্টিকেল জেনারেশন ফাংশন (প্রিমিয়াম প্রম্পট সহ)
+async function generatePremiumArticle(keyword, scrapedData) {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const prompt = `
+    You are a world-class SEO strategist and professional tech blogger.
+    Write a high-value, comprehensive article for: "${keyword}".
+
+    USE THIS DATA:
+    - Search Volume: ${scrapedData.ubersuggest.volume}
+    - Difficulty: ${scrapedData.ubersuggest.difficulty}
+    - People Also Ask (Questions): ${scrapedData.atp_questions.join(", ")}
+
+    WRITING GUIDELINES:
+    1. Tone: Professional, expert, and helpful. Avoid robotic/generic intro.
+    2. Structure: Use H2 and H3 tags. Naturally integrate the "People Also Ask" questions as subheadings.
+    3. Authenticity: Talk like a human who has actually tested these tools. Mention MaximoHost (our brand) where relevant.
+    4. Quality: No fluff. Each paragraph must provide real insight.
+    5. Formatting: Use bullet points and tables for comparison.
+    
+    Language: ${config.content.language}
+    Target Word Count: 1500+ words.
+    `;
+
+    const response = await openai.chat.completions.create({
+        model: "gpt-4o", // অথবা আপনার পছন্দমতো মডেল
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7
+    });
+
+    return response.choices[0].message.content;
 }
 
-/**
- * Run daily generation (multiple articles)
- */
+// ডেইলি জেনারেশন লজিক
 async function runDailyGeneration() {
-  validate();
-  
-  const count = config.bot.articlesPerDay;
-  logger.info(`\n🤖 SEO Bot starting daily run — generating ${count} article(s)\n`);
-  
-  const results = [];
-  for (let i = 0; i < count; i++) {
-    try {
-      logger.info(`\n=== Article ${i + 1} of ${count} ===\n`);
-      const result = await generateOneArticle();
-      results.push({ success: true, ...result });
-      
-      // Small delay between articles
-      if (i < count - 1) {
-        logger.info('Waiting 30s before next article...');
-        await new Promise(r => setTimeout(r, 30000));
-      }
-    } catch (err) {
-      logger.error(`Failed to generate article ${i + 1}: ${err.message}`);
-      results.push({ success: false, error: err.message });
+    logger.info('Starting premium content workflow...');
+    // আপনার কি-ওয়ার্ড লিস্ট থেকে কি-ওয়ার্ড নেওয়ার লজিক এখানে থাকবে
+    const keyword = "semrush group buy reviews"; 
+    
+    const scrapedData = await getKeywordData(keyword);
+    
+    if (scrapedData.status === "success") {
+        const article = await generatePremiumArticle(keyword, scrapedData);
+        logger.info('Article generation complete!');
+        // এখানে আপনার ওয়ার্ডপ্রেস পোস্টিং লজিক থাকবে
+    } else {
+        logger.error('Failed to scrape data for article context.');
     }
-  }
-  
-  const successful = results.filter(r => r.success).length;
-  logger.info(`\n✨ Daily run complete: ${successful}/${count} articles published\n`);
-  return results;
 }
 
-// CLI entry point
-if (require.main === module) {
-  const isOnce = process.argv.includes('--once');
-  
-  (async () => {
-    try {
-      if (isOnce) {
-        await generateOneArticle();
-      } else {
-        await runDailyGeneration();
-      }
-      process.exit(0);
-    } catch (err) {
-      logger.error(`Fatal error: ${err.message}`);
-      console.error(err);
-      process.exit(1);
-    }
-  })();
-}
-
-module.exports = { generateOneArticle, runDailyGeneration };
-
-const { getUbersuggestData } = require('./scraper');
-
-async function runManualTest() {
-    console.log("--- কুকি দিয়ে টেস্ট শুরু হচ্ছে ---");
-    const result = await getUbersuggestData("digital marketing tools");
-    console.log("রেজাল্ট:", JSON.stringify(result, null, 2));
-}
-
-runManualTest();
+module.exports = { runDailyGeneration };
