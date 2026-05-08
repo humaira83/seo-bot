@@ -6,12 +6,19 @@ const logger = require('./lib/logger');
 const fs = require('fs');
 const path = require('path');
 
+// --- CONFIGURATION & PATHS ---
 const inventoryPath = path.join(__dirname, 'inventory.json');
+// আপনার সাইটম্যাপের ইউআরএল এখানে চেক করুন
+const SITEMAP_URL = `${config.wordpress.url}/post-sitemap.xml`; 
 
 // --- Inventory Management Logic ---
 function loadInventory() {
     if (!fs.existsSync(inventoryPath)) return { keywords: [], posted_urls: [] };
-    return JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
+    try {
+        return JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
+    } catch (e) {
+        return { keywords: [], posted_urls: [] };
+    }
 }
 
 function saveInventory(data) {
@@ -26,14 +33,15 @@ async function generatePremiumContent(keyword, data) {
     You are an Expert SEO Strategist. Write a 1500+ word technical guide for: "${keyword}".
     
     CONTEXT:
-    - Volume: ${data.ubersuggest.volume}, Difficulty: ${data.ubersuggest.difficulty}
-    - Questions to Answer: ${data.atp_questions.join(", ")}
+    - Search Volume: ${data.ubersuggest.volume}
+    - SEO Difficulty: ${data.ubersuggest.difficulty}
+    - Questions to Answer (Must include these): ${data.atp_questions.join(", ")}
     
     STRICT RULES:
-    1. Human-like conversational tone (Expert Blogger).
-    2. Naturally promote MaximoHost.com for hosting/SEO tools.
-    3. Use H2/H3 tags, bold keywords, and a comparison table.
-    4. Provide actionable insights, not just surface-level info.
+    1. Human-like conversational tone (Expert Blogger style).
+    2. Naturally promote MaximoHost.com for premium hosting or SEO group buy tools.
+    3. Use H2/H3 tags, bold key terms, and create a comparison table.
+    4. Provide actionable insights that solve user problems.
     
     Language: ${config.content.language || 'English'}
     `;
@@ -58,67 +66,76 @@ async function runDailyGeneration() {
     logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     let inventory = loadInventory();
-    const sitemapUrl = `${config.wordpress.url}/post-sitemap.xml`; // Change if needed
-    const existingSlugs = await getExistingSlugs(sitemapUrl);
+    
+    // সাইটম্যাপ থেকে স্লাগগুলো নিয়ে আসা (ডুপ্লিকেট চেক করার জন্য)
+    const existingSlugs = await getExistingSlugs(SITEMAP_URL);
 
-    // 1. Check if we have pending keywords in inventory
+    // ১. ইনভেন্টরিতে কোনো পেন্ডিং কি-ওয়ার্ড আছে কি না দেখা
     let targetTask = inventory.keywords.find(k => k.status === 'pending');
 
-    // 2. If no keywords or all done, research new ones
+    // ২. যদি ইনভেন্টরি খালি থাকে, তবে নতুন রিসার্চ করা
     if (!targetTask) {
-        logger.info('🔎 Inventory empty or completed. Researching new keywords...');
-        const seedKeyword = "best group buy seo tools"; // Base niche
+        logger.info('🔎 Inventory empty or completed. Researching new keyword set...');
+        
+        // এখানে আপনি আপনার নিশের একটি মেইন কি-ওয়ার্ড দিবেন
+        const seedKeyword = "best group buy seo tools reviews"; 
         const researchData = await getKeywordData(seedKeyword);
 
         if (researchData.status === "success") {
-            // Add new keywords to inventory (excluding duplicates from site)
-            const newKeyword = {
+            const newKeywordEntry = {
                 q: seedKeyword,
                 vol: researchData.ubersuggest.volume,
                 difficulty: researchData.ubersuggest.difficulty,
                 questions: researchData.atp_questions,
-                status: 'pending'
+                status: 'pending',
+                created_at: new Date().toISOString()
             };
 
-            const isDuplicate = existingSlugs.some(slug => slug.includes(seedKeyword.replace(/\s+/g, '-')));
+            // সাইটম্যাপের সাথে ডুপ্লিকেট চেক (স্লাগ ফরম্যাটে)
+            const slugifiedKeyword = seedKeyword.toLowerCase().replace(/\s+/g, '-');
+            const isDuplicate = existingSlugs.some(slug => slug.includes(slugifiedKeyword));
             
             if (!isDuplicate) {
-                inventory.keywords.push(newKeyword);
+                inventory.keywords.push(newKeywordEntry);
                 saveInventory(inventory);
-                targetTask = newKeyword;
+                targetTask = newKeywordEntry;
                 logger.info(`✅ New keyword added to inventory: ${seedKeyword}`);
             } else {
-                logger.warn(`⚠️ Seed keyword "${seedKeyword}" already exists on site. Adjusting...`);
+                logger.warn(`⚠️ Seed keyword "${seedKeyword}" already published. Trying to find another...`);
                 return; 
             }
         }
     }
 
-    // 3. Process the selected keyword
+    // ৩. কি-ওয়ার্ড প্রসেস করা (আর্টিকেল লেখা)
     if (targetTask && targetTask.status === 'pending') {
-        logger.info(`📝 Processing: ${targetTask.q}`);
+        logger.info(`📝 Processing Article for: ${targetTask.q}`);
         
-        // Final check before writing
         const article = await generatePremiumContent(targetTask.q, {
             ubersuggest: { volume: targetTask.vol, difficulty: targetTask.difficulty },
             atp_questions: targetTask.questions
         });
 
         if (article) {
-            // Update status in inventory
+            // ইনভেন্টরি আপডেট করা
             targetTask.status = 'completed';
+            inventory.posted_urls = inventory.posted_urls || [];
+            inventory.posted_urls.push({
+                keyword: targetTask.q,
+                date: new Date().toISOString()
+            });
             saveInventory(inventory);
             
             logger.info('✨ Article generated successfully!');
-            console.log("\n--- Article Preview ---\n");
-            console.log(article.substring(0, 400) + "...");
+            console.log("\n--- Preview ---\n");
+            console.log(article.substring(0, 500) + "...");
             
-            // TODO: Call your postToWordPress function here
+            // TODO: আপনার ওয়ার্ডপ্রেস পোস্টিং ফাংশন এখানে কল করুন
         }
     }
 }
 
-// Trigger Execution
+// Execution Trigger
 if (require.main === module) {
     runDailyGeneration().catch(err => {
         logger.error(`Fatal System Error: ${err.message}`);
