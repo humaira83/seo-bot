@@ -1,35 +1,87 @@
 const { getKeywordData } = require('./scraper');
+const { OpenAI } = require('openai');
+const { config } = require('./config');
 const logger = require('./lib/logger');
 
+// ১. প্রিমিয়াম আর্টিকেল জেনারেশন লজিক
+async function generatePremiumContent(keyword, data) {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    
+    logger.info(`✍️ GPT-4o দিয়ে আর্টিকেল লেখা হচ্ছে: ${keyword}`);
+
+    const prompt = `
+    You are a professional SEO Content Writer. Write a 1500+ word deep-dive article.
+    
+    KEYWORD DATA:
+    - Primary Keyword: ${keyword}
+    - Search Volume: ${data.ubersuggest.volume}
+    - SEO Difficulty: ${data.ubersuggest.difficulty}
+    
+    AUDIENCE QUESTIONS (Use these as Subheadings/H2/H3):
+    ${data.atp_questions.join("\n")}
+
+    STRUCTURE & RULES:
+    1. Introduction: Hook the reader immediately. No robotic "In the digital world" phrases.
+    2. Context: Explain why this keyword matters based on search volume.
+    3. Deep Dive: Answer the questions gathered from AnswerThePublic with expert-level insights.
+    4. Mention MaximoHost (our brand) naturally as a solution for high-performance hosting or group buy tools.
+    5. Formatting: Use bullet points, bold text, and a comparison table.
+    6. Tone: Human-like, helpful, and authoritative.
+    
+    Language: ${config.content.language || 'English'}
+    `;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.7,
+        });
+        return response.choices[0].message.content;
+    } catch (err) {
+        logger.error(`AI Writing Error: ${err.message}`);
+        return null;
+    }
+}
+
+// ২. মেইন অটোমেশন ওয়ার্কফ্লো
 async function runDailyGeneration() {
-    logger.info('🚀 এসইও ওয়ার্কফ্লো শুরু হচ্ছে...');
+    logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    logger.info('🚀 এসইও কন্টেন্ট ওয়ার্কফ্লো শুরু হচ্ছে...');
+    logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    // ১. কি-ওয়ার্ড সিলেকশন (এটি আপনি আপনার ডেটাবেস বা লিস্ট থেকে নিতে পারেন)
-    const seedKeyword = "best group buy seo tools 2026"; 
+    // টেস্ট বা শিডিউল কি-ওয়ার্ড (এটি আপনি পরে ডাইনামিক করতে পারবেন)
+    const targetKeyword = "best group buy seo tools reviews"; 
 
-    // ২. স্ক্র্যাপার চালানো (Ubersuggest + ATP একসাথেই ডেটা আনবে)
-    const data = await getKeywordData(seedKeyword);
+    // ধাপ ১: স্ক্র্যাপার থেকে ডেটা সংগ্রহ
+    const scrapedData = await getKeywordData(targetKeyword);
 
-    if (data.status === "success") {
-        const { volume, difficulty } = data.ubersuggest;
-        const questions = data.atp_questions;
+    if (scrapedData.status === "success") {
+        logger.info(`✅ ডেটা পাওয়া গেছে! ভলিউম: ${scrapedData.ubersuggest.volume}`);
 
-        // ৩. কি-ওয়ার্ড চেক (ভলিউম N/A হলে বা খুব কম হলে চাইলে স্কিপ করতে পারেন)
-        logger.info(`📊 কি-ওয়ার্ড: ${seedKeyword} | Volume: ${volume} | Difficulty: ${difficulty}`);
+        // ধাপ ২: আর্টিকেল জেনারেশন
+        const finalArticle = await generatePremiumContent(targetKeyword, scrapedData);
 
-        if (questions.length > 0) {
-            logger.info(`📝 ${questions.length}টি প্রশ্ন পাওয়া গেছে। আর্টিকেল জেনারেট হচ্ছে...`);
+        if (finalArticle) {
+            logger.info('✨ প্রিমিয়াম আর্টিকেল জেনারেট হয়েছে!');
             
-            // ৪. এখানে আপনার AI Writing ফাংশন কল হবে (যেখানে questions গুলো প্রম্পট হিসেবে যাবে)
-            // const article = await generateArticle(seedKeyword, data);
+            // ধাপ ৩: এখানে আপনার ওয়ার্ডপ্রেস পোস্টিং ফাংশনটি কল করুন
+            // await postToWordPress(targetKeyword, finalArticle);
             
-            logger.info('✅ আর্টিকেল সফলভাবে তৈরি এবং ড্রাফট হিসেবে সেভ হয়েছে।');
-        } else {
-            logger.warn('⚠️ পর্যাপ্ত প্রশ্ন পাওয়া যায়নি, অন্য কি-ওয়ার্ড ট্রাই করুন।');
+            console.log("\n--- জেনারেটেড আর্টিকেলের প্রথম ৫০০ ক্যারেক্টার ---\n");
+            console.log(finalArticle.substring(0, 500) + "...");
         }
     } else {
-        logger.error('❌ স্ক্র্যাপার ডেটা আনতে পারেনি। কুকি চেক করুন।');
+        logger.error(`❌ স্ক্র্যাপার ফেইল করেছে: ${scrapedData.msg}`);
     }
+}
+
+// ৩. টার্মিনাল থেকে সরাসরি রান করার জন্য কল
+if (require.main === module) {
+    runDailyGeneration().catch(err => {
+        logger.error(`Fatal Error: ${err.message}`);
+        process.exit(1);
+    });
 }
 
 module.exports = { runDailyGeneration };
