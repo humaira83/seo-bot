@@ -1,28 +1,20 @@
-# SEO Bot - Production Dockerfile
-# Optimized for Coolify deployment
+FROM node:20-slim
 
-FROM node:20-alpine
+# ব্রাউজার চালানোর জন্য সিস্টেম লাইব্রেরি ইনস্টল
+RUN apt-get update && apt-get install -y \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+    librandr2 libgbm1 libasound2 libpango-1.0-0 libpangocairo-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Install only production dependencies (faster, smaller image)
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm install
 
-# Copy source code
-COPY src/ ./src/
+# প্লে-রাইট ব্রাউজার ইনস্টল
+RUN npx playwright install chromium
 
-# Create data directory (will be mounted as volume in Coolify)
-RUN mkdir -p /app/data/logs
+COPY . .
 
-# Run as non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 && \
-    chown -R nodejs:nodejs /app
-
-USER nodejs
-
-# Default command: one-shot generation (perfect for Coolify Cron Job)
-# To run as long-lived service instead, override with: node src/index.js
 CMD ["node", "src/bot.js"]
