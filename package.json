@@ -6,13 +6,15 @@
   "scripts": {
     "start": "node src/index.js",
     "generate": "node src/bot.js --once",
-    "test-api": "node src/lib/claude.js --test",
+    "test-claude": "node src/lib/claude.js --test",
+    "test-openai": "node src/lib/openai.js --test",
     "test-wp": "node src/lib/wordpress.js --test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.1",
     "axios": "^1.7.7",
     "dotenv": "^16.4.5",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "openai": "^4.73.1"
   }
 }
