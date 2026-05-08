@@ -133,3 +133,25 @@ if (require.main === module) {
 }
 
 module.exports = { generateOneArticle, runDailyGeneration };
+
+const { getUbersuggestData } = require('./scraper');
+
+async function runManualTest() {
+    console.log("--- ম্যানুয়াল টেস্ট শুরু হচ্ছে ---");
+    
+    const testKeyword = "digital marketing tips"; // আপনার পছন্দের কি-ওয়ার্ড
+    const email = process.env.UBER_EMAIL;
+    const pass = process.env.UBER_PASS;
+
+    if (!email || !pass) {
+        console.error("Error: Environment variables (UBER_EMAIL or UBER_PASS) পাওয়া যায়নি!");
+        return;
+    }
+
+    const result = await getUbersuggestData(testKeyword, email, pass);
+    console.log("টেস্ট রেজাল্ট:", JSON.stringify(result, null, 2));
+    console.log("--- ম্যানুয়াল টেস্ট শেষ ---");
+}
+
+// এই লাইনটি বট চালু হওয়ার সাথে সাথেই টেস্ট রান করবে
+runManualTest();
