@@ -6,18 +6,19 @@ const logger = require('./lib/logger');
 const fs = require('fs');
 const path = require('path');
 
-// --- CONFIGURATION & PATHS ---
+// --- PATHS & CONSTANTS ---
 const inventoryPath = path.join(__dirname, 'inventory.json');
-// আপনার সাইটম্যাপের ইউআরএল এখানে চেক করুন
-const SITEMAP_URL = `${config.wordpress.url}/post-sitemap.xml`; 
+const SITEMAP_URL = `${config.wordpress.url}/post-sitemap.xml`; // RankMath/Yoast default
 
-// --- Inventory Management Logic ---
+// --- 1. Inventory Logic (The Brain) ---
 function loadInventory() {
-    if (!fs.existsSync(inventoryPath)) return { keywords: [], posted_urls: [] };
+    if (!fs.existsSync(inventoryPath)) {
+        return { keywords: [], posted_history: [] };
+    }
     try {
         return JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
     } catch (e) {
-        return { keywords: [], posted_urls: [] };
+        return { keywords: [], posted_history: [] };
     }
 }
 
@@ -25,23 +26,26 @@ function saveInventory(data) {
     fs.writeFileSync(inventoryPath, JSON.stringify(data, null, 2));
 }
 
-// --- AI Content Writer ---
+// --- 2. Premium AI Writer ---
 async function generatePremiumContent(keyword, data) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     
+    logger.info(`✍️ GPT-4o is crafting article: ${keyword}`);
+
     const prompt = `
-    You are an Expert SEO Strategist. Write a 1500+ word technical guide for: "${keyword}".
+    You are a Senior SEO Expert. Write a 1500+ word, high-value technical guide for: "${keyword}".
     
-    CONTEXT:
-    - Search Volume: ${data.ubersuggest.volume}
-    - SEO Difficulty: ${data.ubersuggest.difficulty}
-    - Questions to Answer (Must include these): ${data.atp_questions.join(", ")}
+    MARKET DATA:
+    - Search Volume: ${data.ubersuggest.volume || 'N/A'}
+    - Difficulty: ${data.ubersuggest.difficulty || 'N/A'}
+    - User Questions to Answer: ${data.atp_questions.join(", ")}
     
-    STRICT RULES:
-    1. Human-like conversational tone (Expert Blogger style).
-    2. Naturally promote MaximoHost.com for premium hosting or SEO group buy tools.
-    3. Use H2/H3 tags, bold key terms, and create a comparison table.
-    4. Provide actionable insights that solve user problems.
+    CONTENT REQUIREMENTS:
+    1. Introduction: Hook the reader with expert insights (No generic AI fluff).
+    2. Deep Dive: Answer the questions from AnswerThePublic thoroughly.
+    3. Branding: Naturally integrate MaximoHost.com as the best solution for hosting and SEO group buy tools.
+    4. Formatting: Use professional H2/H3 headers, bold terms, and comparison tables.
+    5. Call to Action: Professional ending encouraging users to try MaximoHost.
     
     Language: ${config.content.language || 'English'}
     `;
@@ -59,7 +63,7 @@ async function generatePremiumContent(keyword, data) {
     }
 }
 
-// --- Main Automation Workflow ---
+// --- 3. Main Automation Engine ---
 async function runDailyGeneration() {
     logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     logger.info('🚀 ENTERPRISE SEO ENGINE ACTIVATED');
@@ -67,78 +71,92 @@ async function runDailyGeneration() {
 
     let inventory = loadInventory();
     
-    // সাইটম্যাপ থেকে স্লাগগুলো নিয়ে আসা (ডুপ্লিকেট চেক করার জন্য)
+    // Step A: Analysis - Get existing posts from sitemap
     const existingSlugs = await getExistingSlugs(SITEMAP_URL);
 
-    // ১. ইনভেন্টরিতে কোনো পেন্ডিং কি-ওয়ার্ড আছে কি না দেখা
+    // Step B: Pick next pending task
     let targetTask = inventory.keywords.find(k => k.status === 'pending');
 
-    // ২. যদি ইনভেন্টরি খালি থাকে, তবে নতুন রিসার্চ করা
+    // Step C: If Inventory is empty, Research New Keywords (Ubersuggest + ATP)
     if (!targetTask) {
-        logger.info('🔎 Inventory empty or completed. Researching new keyword set...');
+        logger.info('🔎 Inventory dry. Launching new research phase...');
         
-        // এখানে আপনি আপনার নিশের একটি মেইন কি-ওয়ার্ড দিবেন
+        // You can change this seed keyword to anything you want
         const seedKeyword = "best group buy seo tools reviews"; 
         const researchData = await getKeywordData(seedKeyword);
 
         if (researchData.status === "success") {
-            const newKeywordEntry = {
-                q: seedKeyword,
-                vol: researchData.ubersuggest.volume,
-                difficulty: researchData.ubersuggest.difficulty,
-                questions: researchData.atp_questions,
-                status: 'pending',
-                created_at: new Date().toISOString()
-            };
-
-            // সাইটম্যাপের সাথে ডুপ্লিকেট চেক (স্লাগ ফরম্যাটে)
-            const slugifiedKeyword = seedKeyword.toLowerCase().replace(/\s+/g, '-');
-            const isDuplicate = existingSlugs.some(slug => slug.includes(slugifiedKeyword));
+            const slugified = seedKeyword.toLowerCase().replace(/\s+/g, '-');
             
-            if (!isDuplicate) {
-                inventory.keywords.push(newKeywordEntry);
+            // Check if we already have this on the website
+            const alreadyPublished = existingSlugs.some(slug => slug.includes(slugified));
+            
+            if (!alreadyPublished) {
+                targetTask = {
+                    q: seedKeyword,
+                    vol: researchData.ubersuggest.volume,
+                    difficulty: researchData.ubersuggest.difficulty,
+                    questions: researchData.atp_questions,
+                    status: 'pending',
+                    created_at: new Date().toISOString()
+                };
+                inventory.keywords.push(targetTask);
                 saveInventory(inventory);
-                targetTask = newKeywordEntry;
-                logger.info(`✅ New keyword added to inventory: ${seedKeyword}`);
+                logger.info(`✅ New research saved to inventory: ${seedKeyword}`);
             } else {
-                logger.warn(`⚠️ Seed keyword "${seedKeyword}" already published. Trying to find another...`);
-                return; 
+                logger.warn(`⚠️ "${seedKeyword}" already exists on site. Researching next...`);
+                // Optional: You can trigger more research here
+                return;
             }
+        } else {
+            logger.error(`❌ Research Failed: ${researchData.msg}`);
+            return;
         }
     }
 
-    // ৩. কি-ওয়ার্ড প্রসেস করা (আর্টিকেল লেখা)
+    // Step D: Generate Content for the Task
     if (targetTask && targetTask.status === 'pending') {
-        logger.info(`📝 Processing Article for: ${targetTask.q}`);
+        logger.info(`📝 Processing Article: ${targetTask.q}`);
         
-        const article = await generatePremiumContent(targetTask.q, {
+        const articleContent = await generatePremiumContent(targetTask.q, {
             ubersuggest: { volume: targetTask.vol, difficulty: targetTask.difficulty },
             atp_questions: targetTask.questions
         });
 
-        if (article) {
-            // ইনভেন্টরি আপডেট করা
+        if (articleContent) {
+            // Update Inventory Status
             targetTask.status = 'completed';
-            inventory.posted_urls = inventory.posted_urls || [];
-            inventory.posted_urls.push({
+            inventory.posted_history = inventory.posted_history || [];
+            inventory.posted_history.push({
                 keyword: targetTask.q,
                 date: new Date().toISOString()
             });
             saveInventory(inventory);
             
-            logger.info('✨ Article generated successfully!');
+            logger.info('✨ Article Generation Complete!');
             console.log("\n--- Preview ---\n");
-            console.log(article.substring(0, 500) + "...");
+            console.log(articleContent.substring(0, 500) + "...");
             
-            // TODO: আপনার ওয়ার্ডপ্রেস পোস্টিং ফাংশন এখানে কল করুন
+            // Step E: WordPress Posting (Import your WP module if ready)
+            try {
+                const wp = require('./lib/wordpress'); // Make sure this file exists
+                const result = await wp.createPost({
+                    title: targetTask.q.toUpperCase(),
+                    content: articleContent,
+                    status: config.bot.postStatus || 'draft'
+                });
+                if (result) logger.info(`✅ Posted to WordPress (ID: ${result.id})`);
+            } catch (wpErr) {
+                logger.error(`WordPress Upload Failed: ${wpErr.message}`);
+            }
         }
     }
 }
 
-// Execution Trigger
+// Trigger Trigger
 if (require.main === module) {
     runDailyGeneration().catch(err => {
-        logger.error(`Fatal System Error: ${err.message}`);
+        logger.error(`Fatal Error: ${err.message}`);
         process.exit(1);
     });
 }
