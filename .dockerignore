@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+data
+*.log
+.env
+.env.local
+.git
+.gitignore
+.DS_Store
+README.md
+COOLIFY-DEPLOY.md
+SETUP-GUIDE.md
+.dockerignore
+Dockerfile
+docker-compose.yml

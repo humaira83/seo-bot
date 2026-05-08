@@ -1,0 +1,17 @@
+version: '3.8'
+
+# Local testing with Docker Compose
+# For production, deploy via Coolify
+
+services:
+  seo-bot:
+    build: .
+    container_name: seo-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    # Default: one-shot mode (run via: docker compose run seo-bot)
+    # For continuous mode (with internal cron):
+    # command: node src/index.js
